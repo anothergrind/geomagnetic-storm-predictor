@@ -5,13 +5,15 @@ Trains a gradient-boosting classifier on the team's time-binned dataset
 at a selectable forecast horizon, using the same time-based train/test split
 as the modeling notebooks (train < 2022-01-01, test >= 2022-01-01).
 """
+import json
+from pathlib import Path
+import joblib
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
 import pandas as pd
 import streamlit as st
-from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.metrics import (
     average_precision_score,
     confusion_matrix,
@@ -24,7 +26,9 @@ from sklearn.metrics import (
 
 DATA_PATH = "data/time_binned_dataset.csv"
 SPLIT_DATE = "2022-01-01"
-HORIZONS = [3, 6, 12, 24]
+HORIZONS = [3]
+XGB_MODEL_PATH = Path("time-series-modeling/xgboost_storm_3h_deployed.joblib")
+XGB_METADATA_PATH = Path("time-series-modeling/xgboost_storm_3h_metadata.json")
 
 # Palette (validated for CVD safety and contrast)
 BLUE = "#2a78d6"
@@ -59,31 +63,36 @@ def load_data():
     df[float_cols] = df[float_cols].astype("float32")
     return df
 
+@st.cache_data(show_spinner="Loading XGBoost metadata…")
+def load_xgb_metadata():
+    with open(XGB_METADATA_PATH) as f:
+        return json.load(f)
 
-def feature_columns(df):
-    targets = [c for h in HORIZONS for c in (f"ap_target_{h}h", f"storm_{h}h")]
-    return [c for c in df.columns if c not in targets and c != "datetime"]
+
+@st.cache_resource(show_spinner="Loading deployed XGBoost model…")
+def load_xgb_model():
+    return joblib.load(XGB_MODEL_PATH)
 
 
-@st.cache_resource(show_spinner="Training model…")
+@st.cache_resource(show_spinner="Scoring test period…")
 def train_model(horizon):
+    if horizon != 3:
+        raise ValueError("The deployed XGBoost model currently supports only the 3-hour horizon.")
+
     df = load_data()
-    features = feature_columns(df)
-    target = f"storm_{horizon}h"
+    metadata = load_xgb_metadata()
+    model = load_xgb_model()
 
-    train = df[df["datetime"] < SPLIT_DATE]
-    test = df[df["datetime"] >= SPLIT_DATE]
+    features = metadata["features"]
+    target = metadata["target"]
 
-    model = HistGradientBoostingClassifier(
-        max_iter=300,
-        learning_rate=0.1,
-        class_weight="balanced",
-        early_stopping=True,
-        random_state=42,
-    )
-    model.fit(train[features], train[target])
+    missing_features = [col for col in features if col not in df.columns]
+    if missing_features:
+        raise ValueError(f"Missing required XGBoost features: {missing_features}")
 
+    test = df[df["datetime"] >= SPLIT_DATE].copy()
     proba = model.predict_proba(test[features])[:, 1]
+
     return model, test.reset_index(drop=True), proba
 
 
@@ -152,18 +161,25 @@ if page == "Overview":
 # -------------------------------------------------------------- model page --
 elif page == "Model performance":
     st.title("Model performance")
+    metadata = load_xgb_metadata()
+
     st.write(
-        f"`HistGradientBoostingClassifier` (300 trees, balanced class weights) "
-        f"trained on bins before {SPLIT_DATE}, evaluated on {SPLIT_DATE} onward — "
-        "the same time-based split used in the team's notebooks. "
-        "Missing values are handled natively by the model."
+        f"Deployed **Candidate A XGBoost** model for 3-hour geomagnetic storm prediction. "
+        f"The model uses the no-current-Ap feature set, Random Oversampling during training, "
+        f"and a median-imputation + XGBoost pipeline. It was trained on 2010–2021 and "
+        f"evaluated on 2022–2024. The selected operating threshold is "
+        f"**{metadata['operating_threshold']:.2f}**."
     )
 
     model, test, proba = train_model(horizon)
     y_true = test[target].values
 
     threshold = st.slider(
-        "Decision threshold (storm probability)", 0.05, 0.95, 0.50, 0.05
+        "Decision threshold (storm probability)",
+        min_value=0.05,
+        max_value=0.99,
+        value=float(metadata["operating_threshold"]),
+        step=0.01,
     )
     y_pred = (proba >= threshold).astype(int)
 
