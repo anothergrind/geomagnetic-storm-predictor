@@ -414,3 +414,504 @@ def event_conditions(event: pd.DataFrame, t: dict, height: int = 220) -> alt.Cha
     )
 
     return _finish(alt.layer(ap, lines), t, height)
+
+# ==========================================================
+# Data Explorer Charts
+# ==========================================================
+
+import altair as alt
+import pandas as pd
+
+
+def feature_timeseries(
+    data: pd.DataFrame,
+    feature: str,
+    theme: dict,
+    show_storms: bool = True,
+):
+    """
+    Interactive time-series for any feature.
+
+    Mouse wheel:
+        zoom
+
+    Drag:
+        pan
+
+    Double click:
+        reset
+    """
+
+    zoom = alt.selection_interval(bind="scales")
+
+    base = (
+        alt.Chart(data)
+        .encode(
+            x=alt.X(
+                "datetime:T",
+                title="Date",
+            )
+        )
+    )
+
+    line = (
+        base
+        .mark_line(
+            color=theme["series"][0],
+            strokeWidth=2,
+        )
+        .encode(
+            y=alt.Y(
+                f"{feature}:Q",
+                title=feature.replace("_", " "),
+            ),
+            tooltip=[
+                alt.Tooltip(
+                    "datetime:T",
+                    title="Time",
+                ),
+                alt.Tooltip(
+                    f"{feature}:Q",
+                    format=".3f",
+                ),
+            ],
+        )
+    )
+
+    if not show_storms:
+        return (
+            line
+            .properties(height=420)
+            .add_params(zoom)
+        )
+
+    storms = (
+        alt.Chart(
+            data[data["storm_3h"] == 1]
+        )
+        .mark_circle(
+            color=STATUS["critical"],
+            size=55,
+        )
+        .encode(
+            x="datetime:T",
+            y=f"{feature}:Q",
+            tooltip=[
+                alt.Tooltip("datetime:T"),
+                alt.Tooltip(f"{feature}:Q"),
+            ],
+        )
+    )
+
+    return (
+        (line + storms)
+        .properties(height=420)
+        .add_params(zoom)
+    )
+
+
+# ----------------------------------------------------------
+
+
+def feature_distribution(
+    data: pd.DataFrame,
+    feature: str,
+    theme: dict,
+):
+
+    return (
+        alt.Chart(data)
+        .mark_bar(
+            color=theme["series"][0],
+            opacity=0.85,
+        )
+        .encode(
+            alt.X(
+                f"{feature}:Q",
+                bin=alt.Bin(maxbins=50),
+                title=feature.replace("_", " "),
+            ),
+            alt.Y(
+                "count()",
+                title="Observations",
+            ),
+            tooltip=[
+                alt.Tooltip("count()"),
+            ],
+        )
+        .properties(
+            height=350,
+        )
+    )
+
+
+# ----------------------------------------------------------
+
+
+def storm_distribution(
+    data: pd.DataFrame,
+    feature: str,
+    theme: dict,
+):
+
+    df = data.copy()
+
+    df["Condition"] = (
+        df["storm_3h"]
+        .map(
+            {
+                0: "Quiet",
+                1: "Storm",
+            }
+        )
+    )
+
+    return (
+        alt.Chart(df)
+        .transform_density(
+            feature,
+            groupby=["Condition"],
+            as_=[feature, "Density"],
+        )
+        .mark_area(
+            opacity=0.45,
+        )
+        .encode(
+            x=alt.X(
+                f"{feature}:Q",
+                title=feature.replace("_", " "),
+            ),
+            y="Density:Q",
+            color=alt.Color(
+                "Condition:N",
+                scale=alt.Scale(
+                    range=[
+                        theme["series"][0],
+                        STATUS["critical"],
+                    ]
+                ),
+            ),
+            tooltip=[
+                "Condition:N",
+                alt.Tooltip(
+                    "Density:Q",
+                    format=".3f",
+                ),
+            ],
+        )
+        .properties(
+            height=350,
+        )
+    )
+
+
+# ----------------------------------------------------------
+
+
+def monthly_storms(
+    monthly: pd.DataFrame,
+    theme: dict,
+):
+
+    return (
+        alt.Chart(monthly)
+        .mark_bar(
+            color=theme["series"][2],
+        )
+        .encode(
+            x=alt.X(
+                "datetime:T",
+                title="Month",
+            ),
+            y=alt.Y(
+                "storm_3h:Q",
+                title="Storm Bins",
+            ),
+            tooltip=[
+                alt.Tooltip(
+                    "datetime:T",
+                    title="Month",
+                ),
+                alt.Tooltip(
+                    "storm_3h:Q",
+                    title="Storms",
+                ),
+            ],
+        )
+        .properties(
+            height=350,
+        )
+    )
+
+# ----------------------------------------------------------
+
+
+def feature_scatter(
+    data: pd.DataFrame,
+    x_feature: str,
+    y_feature: str,
+    theme: dict,
+):
+    """
+    Interactive scatter plot comparing two selected features.
+    Storm observations are highlighted in a contrasting color.
+    """
+
+    df = data.copy()
+
+    df["Condition"] = df["storm_3h"].map(
+        {
+            0: "Quiet",
+            1: "Storm",
+        }
+    )
+
+    brush = alt.selection_interval()
+
+    points = (
+        alt.Chart(df)
+        .mark_circle(size=42, opacity=0.65)
+        .encode(
+            x=alt.X(
+                f"{x_feature}:Q",
+                title=x_feature.replace("_", " "),
+            ),
+            y=alt.Y(
+                f"{y_feature}:Q",
+                title=y_feature.replace("_", " "),
+            ),
+            color=alt.Color(
+                "Condition:N",
+                scale=alt.Scale(
+                    domain=["Quiet", "Storm"],
+                    range=[
+                        theme["series"][0],
+                        STATUS["critical"],
+                    ],
+                ),
+            ),
+            tooltip=[
+                alt.Tooltip("datetime:T"),
+                alt.Tooltip(f"{x_feature}:Q", format=".3f"),
+                alt.Tooltip(f"{y_feature}:Q", format=".3f"),
+                "Condition:N",
+            ],
+        )
+        .add_params(brush)
+    )
+
+    return points.properties(height=420)
+
+
+# ----------------------------------------------------------
+
+
+def correlation_heatmap(
+    corr: pd.DataFrame,
+):
+    """
+    Correlation matrix heatmap.
+    """
+
+    heat = (
+        alt.Chart(
+            corr.reset_index()
+            .melt(
+                id_vars="index",
+                var_name="Feature 2",
+                value_name="Correlation",
+            )
+            .rename(columns={"index": "Feature 1"})
+        )
+        .mark_rect()
+        .encode(
+            x=alt.X(
+                "Feature 1:N",
+                sort=None,
+                title=None,
+            ),
+            y=alt.Y(
+                "Feature 2:N",
+                sort=None,
+                title=None,
+            ),
+            color=alt.Color(
+                "Correlation:Q",
+                scale=alt.Scale(
+                    scheme="redblue",
+                    domain=(-1, 1),
+                ),
+            ),
+            tooltip=[
+                "Feature 1",
+                "Feature 2",
+                alt.Tooltip(
+                    "Correlation:Q",
+                    format=".3f",
+                ),
+            ],
+        )
+    )
+
+    text = (
+        alt.Chart(
+            corr.reset_index()
+            .melt(
+                id_vars="index",
+                var_name="Feature 2",
+                value_name="Correlation",
+            )
+            .rename(columns={"index": "Feature 1"})
+        )
+        .mark_text(fontSize=10)
+        .encode(
+            x="Feature 1:N",
+            y="Feature 2:N",
+            text=alt.Text(
+                "Correlation:Q",
+                format=".2f",
+            ),
+            color=alt.condition(
+                "abs(datum.Correlation) > 0.6",
+                alt.value("white"),
+                alt.value("black"),
+            ),
+        )
+    )
+
+    return (
+        heat + text
+    ).properties(
+        height=520,
+        width=520,
+    )
+
+
+# ----------------------------------------------------------
+
+
+def rolling_feature(
+    data: pd.DataFrame,
+    feature: str,
+    theme: dict,
+):
+    """
+    Overlay raw observations with a rolling mean.
+    """
+
+    base = alt.Chart(data)
+
+    raw = (
+        base
+        .mark_line(
+            color="#BBBBBB",
+            opacity=0.45,
+        )
+        .encode(
+            x="datetime:T",
+            y=f"{feature}:Q",
+        )
+    )
+
+    smooth = (
+        base
+        .transform_window(
+            rolling_mean=f"mean({feature})",
+            frame=[-12, 12],
+        )
+        .mark_line(
+            color=theme["series"][1],
+            strokeWidth=3,
+        )
+        .encode(
+            x="datetime:T",
+            y="rolling_mean:Q",
+            tooltip=[
+                alt.Tooltip(
+                    "rolling_mean:Q",
+                    format=".3f",
+                    title="Rolling Mean",
+                )
+            ],
+        )
+    )
+
+    return (
+        raw + smooth
+    ).properties(
+        height=420,
+    )
+
+
+# ----------------------------------------------------------
+
+
+def yearly_storms(
+    yearly: pd.DataFrame,
+    theme: dict,
+):
+    """
+    Number of storm bins observed each year.
+    """
+
+    return (
+        alt.Chart(yearly)
+        .mark_bar(
+            color=theme["series"][2],
+        )
+        .encode(
+            x=alt.X(
+                "Year:O",
+                title="Year",
+            ),
+            y=alt.Y(
+                "Storms:Q",
+                title="Storm Bins",
+            ),
+            tooltip=[
+                "Year",
+                "Storms",
+            ],
+        )
+        .properties(
+            height=340,
+        )
+    )
+
+
+# ----------------------------------------------------------
+
+
+def feature_statistics(
+    data: pd.DataFrame,
+    feature: str,
+):
+    """
+    Returns descriptive statistics as a DataFrame.
+    """
+
+    s = data[feature].dropna()
+
+    return pd.DataFrame(
+        {
+            "Statistic": [
+                "Mean",
+                "Median",
+                "Std Dev",
+                "Minimum",
+                "25%",
+                "75%",
+                "Maximum",
+            ],
+            "Value": [
+                s.mean(),
+                s.median(),
+                s.std(),
+                s.min(),
+                s.quantile(0.25),
+                s.quantile(0.75),
+                s.max(),
+            ],
+        }
+    )
+

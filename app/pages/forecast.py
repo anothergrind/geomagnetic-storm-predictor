@@ -23,6 +23,14 @@ _PRESETS = {
     "Quiet spell · Jul 2022": ("2022-07-01", "2022-08-01"),
 }
 
+def _set_window(start, end):
+    st.session_state[_WINDOW_KEY] = (
+        pd.Timestamp(start).date(),
+        pd.Timestamp(end).date(),
+    )
+
+def _set_full_window(min_d, max_d):
+    st.session_state[_WINDOW_KEY] = (min_d, max_d)
 
 def render() -> None:
     t = tokens()
@@ -78,14 +86,20 @@ def _controls(scored: pd.DataFrame):
 
         preset_cols = st.columns(len(_PRESETS) + 1, gap="small")
         for col, (label, (start, end)) in zip(preset_cols, _PRESETS.items()):
-            if col.button(label, width="stretch", key=f"preset_{label}"):
-                st.session_state[_WINDOW_KEY] = (
-                    pd.Timestamp(start).date(), pd.Timestamp(end).date(),
-                )
-                st.rerun()
-        if preset_cols[-1].button("Full test period", width="stretch", key="preset_full"):
-            st.session_state[_WINDOW_KEY] = (min_d, max_d)
-            st.rerun()
+            col.button(
+                label,
+                width="stretch",
+                key=f"preset_{label}",
+                on_click=_set_window,
+                args=(start, end),
+            )
+        preset_cols[-1].button(
+            "Full test period",
+            width="stretch",
+            key="preset_full",
+            on_click=_set_full_window,
+            args=(min_d, max_d),
+        )
 
     return model, window
 

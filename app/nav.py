@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from app.pages import forecast, overview, performance, storms
+from app.pages import data_explorer, forecast, overview, performance, storms
 
 _PAGES: dict = {}
 
@@ -31,9 +31,13 @@ def build() -> dict[str, list]:
         storms.render, title="Storm explorer", icon=":material/storm:",
         url_path="storms",
     )
+    _PAGES["data_explorer"] = st.Page(
+        data_explorer.render, title="Data Explorer", icon=":material/analytics:",
+        url_path="data-explorer",
+    )
     return {
         "Forecast": [_PAGES["overview"], _PAGES["forecast"]],
-        "Analysis": [_PAGES["performance"], _PAGES["storms"]],
+        "Analysis": [_PAGES["performance"], _PAGES["storms"], _PAGES["data_explorer"]],
     }
 
 
